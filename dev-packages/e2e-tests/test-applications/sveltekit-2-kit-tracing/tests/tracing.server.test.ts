@@ -1,16 +1,15 @@
 import { expect, test } from '@playwright/test';
-import { collectStreamedSpans } from '@sentry-internal/test-utils';
-import { getSegmentChildSpans } from './utils';
+import { collectSegmentSpans } from '@sentry-internal/test-utils';
 
 test('server pageload request span has nested request span for sub request', async ({ page }) => {
-  const serverTraceSpansPromise = collectStreamedSpans('sveltekit-2-kit-tracing', spansOfTrace =>
-    spansOfTrace.some(span => span.name === 'GET /server-load-fetch' && span.is_segment),
+  const serverSegmentPromise = collectSegmentSpans(
+    'sveltekit-2-kit-tracing',
+    segmentSpan => segmentSpan.name === 'GET /server-load-fetch',
   );
 
   await page.goto('/server-load-fetch');
 
-  const serverTraceSpans = await serverTraceSpansPromise;
-  const serverSpan = serverTraceSpans.find(span => span.name === 'GET /server-load-fetch' && span.is_segment)!;
+  const { segmentSpan: serverSpan, childSpans } = await serverSegmentPromise;
 
   expect(serverSpan.status).toBe('ok');
   expect(serverSpan.attributes).toMatchObject({
@@ -26,11 +25,9 @@ test('server pageload request span has nested request span for sub request', asy
     'http.request.header.user_agent': { value: expect.any(String), type: 'string' },
   });
 
-  const spans = getSegmentChildSpans(serverTraceSpans, serverSpan);
+  expect(childSpans).toHaveLength(6);
 
-  expect(spans).toHaveLength(6);
-
-  expect(spans).toEqual(
+  expect(childSpans).toEqual(
     expect.arrayContaining([
       // initial resolve span:
       expect.objectContaining({
@@ -109,8 +106,9 @@ test('server pageload request span has nested request span for sub request', asy
 });
 
 test('server trace includes form action span', async ({ page }) => {
-  const serverTraceSpansPromise = collectStreamedSpans('sveltekit-2-kit-tracing', spansOfTrace =>
-    spansOfTrace.some(span => span.name === 'POST /form-action' && span.is_segment),
+  const serverSegmentPromise = collectSegmentSpans(
+    'sveltekit-2-kit-tracing',
+    segmentSpan => segmentSpan.name === 'POST /form-action',
   );
 
   await page.goto('/form-action');
@@ -118,8 +116,7 @@ test('server trace includes form action span', async ({ page }) => {
   await page.locator('#inputName').fill('H4cktor');
   await page.locator('#buttonSubmit').click();
 
-  const serverTraceSpans = await serverTraceSpansPromise;
-  const serverSpan = serverTraceSpans.find(span => span.name === 'POST /form-action' && span.is_segment)!;
+  const { segmentSpan: serverSpan, childSpans } = await serverSegmentPromise;
 
   expect(serverSpan.attributes).toMatchObject({
     'sentry.op': { value: 'http.server', type: 'string' },
@@ -127,11 +124,9 @@ test('server trace includes form action span', async ({ page }) => {
     'sentry.segment.name.source': { value: 'route', type: 'string' },
   });
 
-  const spans = getSegmentChildSpans(serverTraceSpans, serverSpan);
+  expect(childSpans).toHaveLength(3);
 
-  expect(spans).toHaveLength(3);
-
-  expect(spans).toEqual(
+  expect(childSpans).toEqual(
     expect.arrayContaining([
       // sequenced handler span
       expect.objectContaining({

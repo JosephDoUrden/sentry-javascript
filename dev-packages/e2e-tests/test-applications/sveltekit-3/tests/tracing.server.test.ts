@@ -1,16 +1,15 @@
 import { expect, test } from '@playwright/test';
-import { collectStreamedSpans } from '@sentry-internal/test-utils';
-import { getSegmentChildSpans } from './utils';
+import { collectSegmentSpans } from '@sentry-internal/test-utils';
 
 test('server pageload request span has nested request span for sub request', async ({ page }) => {
-  const serverTraceSpansPromise = collectStreamedSpans('sveltekit-3', spansOfTrace =>
-    spansOfTrace.some(span => span.name === 'GET /server-load-fetch' && span.is_segment),
+  const serverSegmentPromise = collectSegmentSpans(
+    'sveltekit-3',
+    segmentSpan => segmentSpan.name === 'GET /server-load-fetch',
   );
 
   await page.goto('/server-load-fetch');
 
-  const serverTraceSpans = await serverTraceSpansPromise;
-  const serverSpan = serverTraceSpans.find(span => span.name === 'GET /server-load-fetch' && span.is_segment)!;
+  const { segmentSpan: serverSpan, childSpans } = await serverSegmentPromise;
 
   expect(serverSpan.status).toBe('ok');
   expect(serverSpan.attributes).toMatchObject({
@@ -26,11 +25,9 @@ test('server pageload request span has nested request span for sub request', asy
     'http.request.header.user_agent': { value: expect.any(String), type: 'string' },
   });
 
-  const spans = getSegmentChildSpans(serverTraceSpans, serverSpan);
+  expect(childSpans).toHaveLength(6);
 
-  expect(spans).toHaveLength(6);
-
-  expect(spans).toEqual(
+  expect(childSpans).toEqual(
     expect.arrayContaining([
       // initial resolve span:
       expect.objectContaining({
@@ -113,8 +110,9 @@ test('server pageload request span has nested request span for sub request', asy
 // either doesn't reach the traced handle or isn't traced under Kit 3 — needs isolation. Unskip once
 // form-action requests produce a server segment span again.
 test.skip('server trace includes form action span', async ({ page }) => {
-  const serverTraceSpansPromise = collectStreamedSpans('sveltekit-3', spansOfTrace =>
-    spansOfTrace.some(span => span.name === 'POST /form-action' && span.is_segment),
+  const serverSegmentPromise = collectSegmentSpans(
+    'sveltekit-3',
+    segmentSpan => segmentSpan.name === 'POST /form-action',
   );
 
   await page.goto('/form-action');
@@ -122,8 +120,7 @@ test.skip('server trace includes form action span', async ({ page }) => {
   await page.locator('#inputName').fill('H4cktor');
   await page.locator('#buttonSubmit').click();
 
-  const serverTraceSpans = await serverTraceSpansPromise;
-  const serverSpan = serverTraceSpans.find(span => span.name === 'POST /form-action' && span.is_segment)!;
+  const { segmentSpan: serverSpan, childSpans } = await serverSegmentPromise;
 
   expect(serverSpan.attributes).toMatchObject({
     'sentry.op': { value: 'http.server', type: 'string' },
@@ -131,11 +128,9 @@ test.skip('server trace includes form action span', async ({ page }) => {
     'sentry.segment.name.source': { value: 'route', type: 'string' },
   });
 
-  const spans = getSegmentChildSpans(serverTraceSpans, serverSpan);
+  expect(childSpans).toHaveLength(3);
 
-  expect(spans).toHaveLength(3);
-
-  expect(spans).toEqual(
+  expect(childSpans).toEqual(
     expect.arrayContaining([
       // sequenced handler span
       expect.objectContaining({
@@ -169,8 +164,9 @@ test.skip('server trace includes form action span', async ({ page }) => {
 });
 
 test('server trace for a `QUERY` server route includes the wrapped route handler span', async ({ request }) => {
-  const serverTraceSpansPromise = collectStreamedSpans('sveltekit-3', spansOfTrace =>
-    spansOfTrace.some(span => span.name === 'QUERY /query-server-route' && span.is_segment),
+  const serverSegmentPromise = collectSegmentSpans(
+    'sveltekit-3',
+    segmentSpan => segmentSpan.name === 'QUERY /query-server-route',
   );
 
   const response = await request.fetch('/query-server-route', {
@@ -182,8 +178,7 @@ test('server trace for a `QUERY` server route includes the wrapped route handler
   expect(response.status()).toBe(200);
   expect(await response.json()).toEqual({ term: 'sentry', results: ['alice', 'bob'] });
 
-  const serverTraceSpans = await serverTraceSpansPromise;
-  const serverSpan = serverTraceSpans.find(span => span.name === 'QUERY /query-server-route' && span.is_segment)!;
+  const { segmentSpan: serverSpan, childSpans } = await serverSegmentPromise;
 
   expect(serverSpan.attributes).toMatchObject({
     'sentry.op': { value: 'http.server', type: 'string' },
@@ -193,7 +188,7 @@ test('server trace for a `QUERY` server route includes the wrapped route handler
     'http.route': { value: '/query-server-route', type: 'string' },
   });
 
-  expect(getSegmentChildSpans(serverTraceSpans, serverSpan)).toEqual(
+  expect(childSpans).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
         name: 'QUERY /query-server-route',

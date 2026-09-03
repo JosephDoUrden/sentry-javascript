@@ -660,6 +660,71 @@ export function collectStreamedSpans(
 }
 
 /**
+ * Accumulate streamed Span V2 spans across envelopes, grouped by segment, and resolve with the first
+ * segment whose segment span satisfies `isTargetSegment`: that segment span plus its own descendants,
+ * and nothing else.
+ *
+ * This differs from {@link collectStreamedSpans} in scope. Under distributed tracing a trace holds
+ * more than one segment (the browser's pageload segment is a child of a server span, so both share a
+ * trace), and assertions on a server request's child spans must not pick up browser spans. Grouping
+ * by the `sentry.segment.id` attribute every streamed span carries sidesteps both the trace and any
+ * parent-chain walk, which would break when a child arrives in an envelope before its segment.
+ *
+ * Resolves once the matching segment span itself has arrived. A segment ends after its children, so
+ * children that flushed earlier have been accumulated by then.
+ *
+ * @example
+ * ```ts
+ * const { segmentSpan, childSpans } = await collectSegmentSpans(PROXY_SERVER_NAME, segment =>
+ *   segment.name === 'GET /server-load-fetch',
+ * );
+ * expect(segmentSpan.status).toBe('ok');
+ * expect(childSpans).toHaveLength(6);
+ * ```
+ */
+export function collectSegmentSpans(
+  proxyServerName: string,
+  isTargetSegment: (segmentSpan: SerializedStreamedSpan) => boolean,
+): Promise<{ segmentSpan: SerializedStreamedSpan; childSpans: SerializedStreamedSpan[] }> {
+  const spansBySegment = new Map<string, SerializedStreamedSpan[]>();
+
+  return new Promise((resolve, reject) => {
+    waitForStreamedSpans(proxyServerName, spans => {
+      for (const span of spans) {
+        const segmentId = getSegmentId(span);
+        if (!segmentId) {
+          continue;
+        }
+        const spansOfSegment = spansBySegment.get(segmentId);
+        if (spansOfSegment) {
+          spansOfSegment.push(span);
+        } else {
+          spansBySegment.set(segmentId, [span]);
+        }
+      }
+
+      for (const spansOfSegment of spansBySegment.values()) {
+        const segmentSpan = spansOfSegment.find(span => span.is_segment);
+        if (segmentSpan && isTargetSegment(segmentSpan)) {
+          resolve({ segmentSpan, childSpans: spansOfSegment.filter(span => span !== segmentSpan) });
+          return true;
+        }
+      }
+
+      return false;
+    }).catch(reject);
+  });
+}
+
+function getSegmentId(span: SerializedStreamedSpan): string | undefined {
+  const attribute = span.attributes['sentry.segment.id'];
+  if (attribute?.type === 'string') {
+    return attribute.value;
+  }
+  return span.is_segment ? span.span_id : undefined;
+}
+
+/**
  * Helper to get the span operation from a Span V2 JSON object.
  *
  * @example

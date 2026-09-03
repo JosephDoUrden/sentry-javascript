@@ -1,5 +1,5 @@
 import { Page } from '@playwright/test';
-import { getSpanOp, waitForStreamedSpan, type SerializedStreamedSpan } from '@sentry-internal/test-utils';
+import { getSpanOp, waitForStreamedSpan } from '@sentry-internal/test-utils';
 
 /**
  * Helper function that waits for the initial pageload to complete.
@@ -46,29 +46,4 @@ export async function waitForInitialPageload(
   ]);
 
   debug && console.log('hydrated');
-}
-
-/**
- * Returns all spans nested under `segment`, without crossing into other segments.
- *
- * Under span streaming, the browser's pageload segment is parented to the server's
- * `sveltekit.resolve` span and therefore shares the trace with the server request. Stopping at
- * segment boundaries keeps assertions on the server request's child spans free of browser spans.
- */
-export function getSegmentChildSpans(
-  spans: SerializedStreamedSpan[],
-  segment: SerializedStreamedSpan,
-): SerializedStreamedSpan[] {
-  const childSpans: SerializedStreamedSpan[] = [];
-  let parentIds = new Set([segment.span_id]);
-
-  while (parentIds.size > 0) {
-    const nextLevel = spans.filter(
-      span => !span.is_segment && span.parent_span_id && parentIds.has(span.parent_span_id),
-    );
-    childSpans.push(...nextLevel);
-    parentIds = new Set(nextLevel.map(span => span.span_id));
-  }
-
-  return childSpans;
 }
